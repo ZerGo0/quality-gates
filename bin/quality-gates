@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly TOOL_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
+readonly SLOPO_DIR="$TOOL_DIR/slopo"
+readonly INSTALL_STAMP="$TOOL_DIR/.install-stamp"
+
+usage() {
+  cat <<'EOF'
+Usage: quality-gates <command>
+
+Commands:
+  run                            Run the quality gates on the current changes
+  cleanup [--check] [--changes]  Replace AI typography in repository files
+  setup                          Install llama.cpp and the SlopO embedding model
+EOF
+}
+
+die() {
+  printf 'quality-gates: %s\n' "$*" >&2
+  exit 1
+}
+
+lock_hash() {
+  cat "$TOOL_DIR/pnpm-lock.yaml" "$SLOPO_DIR/uv.lock" | shasum -a 256
+}
+
+ensure_dependencies() {
+  local expected
+  expected="$(lock_hash)"
+  if [[ -f "$INSTALL_STAMP" && "$(<"$INSTALL_STAMP")" == "$expected" ]]; then
+    return
+  fi
+  printf 'quality-gates: installing dependencies\n' >&2
+  (cd "$TOOL_DIR" && pnpm install --frozen-lockfile) >&2
+  uv sync --locked --no-dev --project "$SLOPO_DIR" >&2
+  printf '%s\n' "$expected" >"$INSTALL_STAMP"
+}
+
+enter_repository() {
+  local root
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || die 'run this command inside a Git repository'
+  cd "$root"
+}
+
+command="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+case "$command" in
+  run)
+    enter_repository
+    ensure_dependencies
+    exec python3 "$TOOL_DIR/scripts/run_aislop.py"
+    ;;
+  cleanup)
+    enter_repository
+    ensure_dependencies
+    exec node "$TOOL_DIR/scripts/ai-cleanup.ts" "$@"
+    ;;
+  setup)
+    ensure_dependencies
+    exec "$TOOL_DIR/scripts/setup-slopo-llama-cpp.sh"
+    ;;
+  help | -h | --help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

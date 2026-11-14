@@ -1,0 +1,45 @@
+# Used when the repository has no .quality-gates/slopo.conf.yaml.
+# Copy this file there to add repository-specific excludes.
+source_dir: .
+source_dir_exclude:
+  - ".git/"
+  - ".aislop/"
+  - ".fallow/"
+  - ".slopo/"
+  - ".task/"
+  - "**/.astro/"
+  - "**/.cache/"
+  - "**/.next/"
+  - "**/.nyc_output/"
+  - "**/.output/"
+  - "**/.parcel-cache/"
+  - "**/.svelte-kit/"
+  - "**/.venv/"
+  - "**/.wrangler/"
+  - "**/.wxt/"
+  - "**/build/"
+  - "**/coverage/"
+  - "**/dist/"
+  - "**/node_modules/"
+  - "**/out/"
+  - "**/test-results/"
+  - "**/vendor/"
+  - "**/*.generated.ts"
+  - "**/*.pb.go"
+  - "**/*.d.ts"
+  - "**/*.po"
+  - "**/src/locale/"
+  - "**/src/locales/"
+
+db_file: .slopo/repository/slopo.db
+report_dir: .slopo/repository/report
+ignore_file: .quality-gates/slopo.ignore.txt
+
+embedding_model: jina_ai/jina-code-embeddings-0.5b
+embedding_dimensions: 256
+embedding_api_key: local
+embedding_params:
+  api_base: http://127.0.0.1:17998/v1
+  task: code2code.query
+embedding_batch_size: 32
+embedding_batch_chars: 24000

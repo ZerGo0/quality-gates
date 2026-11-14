@@ -1,0 +1,14 @@
+[project]
+name = "quality-gates-slopo"
+version = "0.1.0"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    "slopo",
+]
+
+[tool.uv]
+package = false
+exclude-newer = false
+
+[tool.uv.sources]
+slopo = { git = "https://github.com/ZerGo0/slopo.git", rev = "9c46c5ec3ba58fe5690895984b10cdef601aef46" }
