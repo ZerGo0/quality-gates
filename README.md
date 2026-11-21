@@ -1,6 +1,6 @@
 # quality-gates
 
-Agent quality gates for any Git repository: aislop, anti-slop (oxlint rules), ai-cleanup, fallow, and SlopO duplicate detection. Each gate checks only the current changes.
+Agent quality gates for any Git repository: aislop, anti-slop (oxlint with `@nkzw/oxlint-config` and local rules), ai-cleanup, fallow, and SlopO duplicate detection. Each gate checks only the current changes.
 
 ## Install
 

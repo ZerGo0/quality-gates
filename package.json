@@ -6,10 +6,12 @@
     "./anti-slop": "./anti-slop/index.ts"
   },
   "devDependencies": {
-    "@oxlint/plugins": "^1.93.0",
+    "@nkzw/oxlint-config": "^3.0.1",
+    "@oxlint/plugins": "^1.94.0",
     "aislop": "^0.20.1",
     "fallow": "^3.42.0",
-    "oxlint": "^1.93.0"
+    "oxlint": "^1.94.0",
+    "tsrs": "7.1.0-beta.tsrs3"
   },
   "packageManager": "pnpm@12.16.1"
 }
