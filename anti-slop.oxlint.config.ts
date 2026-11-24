@@ -1,3 +1,4 @@
+import landminesRecommended from "@interfere/landmines/configs/recommended.json" with { type: "json" };
 import nkzw from "@nkzw/oxlint-config";
 import { defineConfig } from "oxlint";
 
@@ -8,6 +9,10 @@ export default defineConfig({
 		{
 			name: "anti-slop",
 			specifier: import.meta.resolve("./anti-slop/index.ts"),
+		},
+		{
+			name: "landmines",
+			specifier: import.meta.resolve("@interfere/landmines"),
 		},
 	],
 	options: {
@@ -39,5 +44,10 @@ export default defineConfig({
 		"anti-slop/no-shape-in-symbol-names": "error",
 		"anti-slop/no-unknown-parameters": "error",
 		"anti-slop/require-safety-comment-for-type-assertion": "error",
+		...landminesRecommended.rules,
+		"landmines/max-files-per-directory": "warn",
+		"landmines/no-inline-hex-encoding": "warn",
+		"landmines/no-test-doubles": "off",
+		"landmines/padding-between-statements": "error",
 	},
 });

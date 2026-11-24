@@ -6,6 +6,7 @@
     "./anti-slop": "./anti-slop/index.ts"
   },
   "devDependencies": {
+    "@interfere/landmines": "0.3.1",
     "@nkzw/oxlint-config": "^3.0.1",
     "@oxlint/plugins": "^1.94.0",
     "aislop": "^0.22.1",
