@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { type LineRange, readChangedLines, touchesChangedLines } from "./changed-lines.ts";
 import { readChangedFiles, readRepositoryFiles, repositoryRoot } from "./repository-files.ts";
 
 const ownPath = relative(repositoryRoot, fileURLToPath(import.meta.url));
@@ -146,7 +147,28 @@ function applyRules(text: string) {
 	return { out, replacements };
 }
 
-async function cleanFile(file: string): Promise<number> {
+function cleanText(text: string, ranges: LineRange[] | undefined) {
+	if (ranges === undefined) return applyRules(text);
+
+	let replacements = 0;
+
+	const out = text
+		.split("\n")
+		.map((line, index) => {
+			if (!touchesChangedLines(ranges, index + 1, index + 1, 0)) return line;
+
+			const cleaned = applyRules(line);
+
+			replacements += cleaned.replacements;
+
+			return cleaned.out;
+		})
+		.join("\n");
+
+	return { out, replacements };
+}
+
+async function cleanFile(file: string, ranges: LineRange[] | undefined): Promise<number> {
 	if (binaryExtensions.has(extname(file).toLowerCase().slice(1))) return 0;
 	const path = resolve(repositoryRoot, file);
 	const buffer = await readFile(path).catch((error: NodeJS.ErrnoException) => {
@@ -156,7 +178,8 @@ async function cleanFile(file: string): Promise<number> {
 	if (buffer === undefined) return 0;
 	if (buffer.includes(0)) return 0;
 	const text = buffer.toString("utf8");
-	const { out, replacements } = applyRules(text);
+	const { out, replacements } = cleanText(text, ranges);
+
 	if (out === text) return 0;
 	if (!checkOnly) await writeFile(path, out, "utf8");
 	return replacements;
@@ -169,14 +192,18 @@ if (files.length === 0) {
 	process.exit(0);
 }
 
+const changedLines = changesOnly ? readChangedLines(files) : new Map<string, LineRange[]>();
+const fixCommand = changesOnly ? "quality-gates cleanup --changes" : "quality-gates cleanup";
+
 let changedFiles = 0;
 for (const file of files) {
-	const replacements = await cleanFile(file);
+	const replacements = await cleanFile(file, changedLines.get(file));
+
 	if (replacements === 0) continue;
 	changedFiles++;
 	console.log(
 		checkOnly
-			? `error: ${file}: ${replacements} AI typography replacement(s) needed; run quality-gates cleanup`
+			? `error: ${file}: ${replacements} AI typography replacement(s) needed; run ${fixCommand}`
 			: `changed: ${file} (${replacements})`,
 	);
 }
