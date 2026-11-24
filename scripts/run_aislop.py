@@ -183,6 +183,7 @@ def build_stages(
     fallow_report = run_directory / "fallow.json"
     full_repository = base is None
     aislop_scope = () if full_repository else ("--changes", "--base", base)
+    aislop_flags = ("--json", "--ignore", "knip/skipped")
     file_scope = ("--all",) if full_repository else ()
     cleanup_scope = () if full_repository else ("--changes",)
     fallow_scope = (
@@ -191,7 +192,7 @@ def build_stages(
     return (
         Stage(
             name="aislop",
-            command=(str(NODE_BIN / "aislop"), "scan", *aislop_scope, ".", "--json"),
+            command=(str(NODE_BIN / "aislop"), "scan", *aislop_scope, ".", *aislop_flags),
             cwd=root,
             environment={"DO_NOT_TRACK": "1"},
             parallel=True,

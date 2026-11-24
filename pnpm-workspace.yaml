@@ -2,3 +2,5 @@ allowBuilds:
   aislop: true
 minimumReleaseAgeExclude:
   - '@interfere/landmines@0.3.1'
+overrides:
+  knip: '-'
