@@ -11,7 +11,11 @@ from unittest.mock import patch
 SLOPO_PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SLOPO_PROJECT))
 
-import run
+import runner.baseline_worktree as baseline_worktree
+import runner.cache as cache_steps
+import runner.embedding_services as embedding_services
+import runner.errors as run_errors
+import runner.paths as run_paths
 from git_test_utils import run_git
 from slopo.schema import SCHEMA_VERSION
 
@@ -26,7 +30,7 @@ class RunTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def test_uses_the_default_profile_without_a_repository_config(self) -> None:
-        paths = run.Paths.discover(self.root)
+        paths = run_paths.Paths.discover(self.root)
 
         self.assertEqual(paths.config, SLOPO_PROJECT / "profiles" / "default.conf.yaml")
         self.assertEqual(paths.database, self.root / ".slopo" / "repository" / "slopo.db")
@@ -39,11 +43,11 @@ class RunTests(unittest.TestCase):
         config.parent.mkdir()
         config.write_text("source_dir: .\n", encoding="utf-8")
 
-        self.assertEqual(run.Paths.discover(self.root).config, config)
+        self.assertEqual(run_paths.Paths.discover(self.root).config, config)
 
     def test_keeps_the_runtime_in_the_user_cache(self) -> None:
         with patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.root / "cache")}):
-            paths = run.Paths.discover(self.root)
+            paths = run_paths.Paths.discover(self.root)
 
         self.assertEqual(
             paths.runtime_dir, self.root / "cache" / "quality-gates" / "llama.cpp"
@@ -52,7 +56,7 @@ class RunTests(unittest.TestCase):
     def test_keeps_a_database_with_the_current_schema(self) -> None:
         self._write_schema_version(SCHEMA_VERSION)
 
-        run.remove_incompatible_database(self.database)
+        cache_steps.remove_incompatible_database(self.database)
 
         self.assertTrue(self.database.is_file())
 
@@ -65,7 +69,7 @@ class RunTests(unittest.TestCase):
         for sidecar in sidecars:
             sidecar.write_bytes(b"cache")
 
-        run.remove_incompatible_database(self.database)
+        cache_steps.remove_incompatible_database(self.database)
 
         self.assertFalse(self.database.exists())
         self.assertTrue(all(not sidecar.exists() for sidecar in sidecars))
@@ -75,18 +79,18 @@ class RunTests(unittest.TestCase):
         target.write_bytes(b"database")
         self.database.symlink_to(target)
 
-        with self.assertRaisesRegex(run.RunError, "not a regular file"):
-            run.remove_incompatible_database(self.database)
+        with self.assertRaisesRegex(run_errors.RunError, "not a regular file"):
+            cache_steps.remove_incompatible_database(self.database)
 
     def test_rejects_a_malformed_database(self) -> None:
         self.database.write_bytes(b"not sqlite")
 
-        with self.assertRaisesRegex(run.RunError, "Could not validate"):
-            run.remove_incompatible_database(self.database)
+        with self.assertRaisesRegex(run_errors.RunError, "Could not validate"):
+            cache_steps.remove_incompatible_database(self.database)
 
     def test_stops_the_embedding_process_group(self) -> None:
         process = subprocess.Popen(["sleep", "30"], start_new_session=True)
-        services = run.EmbeddingServices(run.Paths.discover(self.root), Path("llama"))
+        services = embedding_services.EmbeddingServices(run_paths.Paths.discover(self.root), Path("llama"))
         services.adapter = process
         try:
             services.stop()
@@ -128,13 +132,13 @@ class BaselineWorktreeTests(unittest.TestCase):
         self.cache.mkdir()
         self.baseline = self.cache / "base-worktree"
         self.paths = replace(
-            run.Paths.discover(self.repository),
+            run_paths.Paths.discover(self.repository),
             repository_cache=self.cache,
             base_worktree=self.baseline,
         )
 
     def test_discards_dirty_worktree_and_reuses_clean_replacement(self) -> None:
-        run._prepare_base_worktree(self.paths, self.first_commit)
+        baseline_worktree.prepare_base_worktree(self.paths, self.first_commit)
         (self.baseline / "tracked.txt").write_bytes(b"staged\n")
         run_git(self.baseline, "add", "tracked.txt")
         contents = {
@@ -144,8 +148,8 @@ class BaselineWorktreeTests(unittest.TestCase):
         }
         for name, content in contents.items():
             (self.baseline / name).write_bytes(content)
-        with patch("builtins.print") as output:
-            run._prepare_base_worktree(self.paths, self.next_commit)
+        with patch.object(baseline_worktree, "emit") as output:
+            baseline_worktree.prepare_base_worktree(self.paths, self.next_commit)
 
         self.assertEqual(list(self.cache.glob("base-worktree-preserved-*")), [])
         self.assertEqual((self.baseline / "tracked.txt").read_bytes(), b"next snapshot\n")
@@ -157,23 +161,23 @@ class BaselineWorktreeTests(unittest.TestCase):
         self.assertEqual(registrations.count("worktree "), 2)
         output.assert_any_call(
             f"Discarded dirty SlopO baseline at {self.baseline}. Creating a clean baseline.",
-            file=sys.stderr,
+            sys.stderr,
         )
         self.assertEqual(run_git(self.baseline, "rev-parse", "HEAD"), self.next_commit)
         self.assertEqual(run_git(self.baseline, "rev-parse", "--abbrev-ref", "HEAD"), "HEAD")
         self.assertEqual(run_git(self.baseline, "status", "--porcelain"), "")
         replacement_registration = (self.baseline / ".git").read_bytes()
 
-        run._prepare_base_worktree(self.paths, self.next_commit)
+        baseline_worktree.prepare_base_worktree(self.paths, self.next_commit)
 
         self.assertEqual((self.baseline / ".git").read_bytes(), replacement_registration)
         self.assertEqual(list(self.cache.glob("base-worktree-preserved-*")), [])
 
     def test_switches_a_clean_existing_worktree_to_the_requested_snapshot(self) -> None:
-        run._prepare_base_worktree(self.paths, self.first_commit)
+        baseline_worktree.prepare_base_worktree(self.paths, self.first_commit)
         registration = (self.baseline / ".git").read_bytes()
 
-        run._prepare_base_worktree(self.paths, self.next_commit)
+        baseline_worktree.prepare_base_worktree(self.paths, self.next_commit)
 
         self.assertEqual((self.baseline / ".git").read_bytes(), registration)
         self.assertEqual(run_git(self.baseline, "rev-parse", "HEAD"), self.next_commit)
@@ -181,20 +185,20 @@ class BaselineWorktreeTests(unittest.TestCase):
         self.assertEqual(list(self.cache.glob("base-worktree-preserved-*")), [])
 
     def test_failed_removal_leaves_the_dirty_worktree_untouched(self) -> None:
-        run._prepare_base_worktree(self.paths, self.first_commit)
+        baseline_worktree.prepare_base_worktree(self.paths, self.first_commit)
         tracked = self.baseline / "tracked.txt"
         tracked.write_bytes(b"preserve me\n")
         registration = (self.baseline / ".git").read_bytes()
-        original_run_git = run._run_git
+        original_run_git = baseline_worktree._run_git
 
         def fail_removal(repository: Path, *arguments: str) -> str:
             if arguments[:2] == ("worktree", "remove"):
-                raise run.RunError("simulated removal failure")
+                raise run_errors.RunError("simulated removal failure")
             return original_run_git(repository, *arguments)
 
-        with patch.object(run, "_run_git", side_effect=fail_removal):
-            with self.assertRaisesRegex(run.RunError, "simulated removal failure"):
-                run._prepare_base_worktree(self.paths, self.next_commit)
+        with patch.object(baseline_worktree, "_run_git", side_effect=fail_removal):
+            with self.assertRaisesRegex(run_errors.RunError, "simulated removal failure"):
+                baseline_worktree.prepare_base_worktree(self.paths, self.next_commit)
 
         self.assertEqual(tracked.read_bytes(), b"preserve me\n")
         self.assertEqual((self.baseline / ".git").read_bytes(), registration)
@@ -207,8 +211,8 @@ class BaselineWorktreeTests(unittest.TestCase):
         (target / "keep.txt").write_bytes(b"keep\n")
         self.baseline.symlink_to(target, target_is_directory=True)
 
-        with self.assertRaisesRegex(run.RunError, "not a regular directory"):
-            run._prepare_base_worktree(self.paths, self.first_commit)
+        with self.assertRaisesRegex(run_errors.RunError, "not a regular directory"):
+            baseline_worktree.prepare_base_worktree(self.paths, self.first_commit)
 
         self.assertTrue(self.baseline.is_symlink())
         self.assertEqual((target / "keep.txt").read_bytes(), b"keep\n")
@@ -219,8 +223,8 @@ class BaselineWorktreeTests(unittest.TestCase):
         (child / "keep.txt").write_bytes(b"keep\n")
         paths = replace(self.paths, base_worktree=child)
 
-        with self.assertRaisesRegex(run.RunError, "not a Git worktree"):
-            run._prepare_base_worktree(paths, self.first_commit)
+        with self.assertRaisesRegex(run_errors.RunError, "not a Git worktree"):
+            baseline_worktree.prepare_base_worktree(paths, self.first_commit)
 
         self.assertEqual((child / "keep.txt").read_bytes(), b"keep\n")
 

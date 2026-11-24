@@ -38,14 +38,26 @@ def add_embedding(connection: sqlite3.Connection, body_hash: str, blob: bytes) -
     connection.execute("INSERT INTO embeddings VALUES (?, ?)", (body_hash, blob))
 
 
+def create_databases(directory: Path, **source_options: object) -> tuple[Path, Path]:
+    source_path = directory / "source.db"
+    target_path = directory / "target.db"
+    create_database(source_path, **source_options)
+    create_database(target_path)
+    return source_path, target_path
+
+
+def add_needed_embedding(source_path: Path, target_path: Path, blob: bytes) -> None:
+    with sqlite3.connect(source_path) as source:
+        add_embedding(source, "needed", blob)
+    with sqlite3.connect(target_path) as target:
+        target.execute("INSERT INTO code_units VALUES (?)", ("needed",))
+
+
 class SeedEmbeddingsTests(unittest.TestCase):
     def test_selectively_copies_only_needed_target_embeddings(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
-            source_path = directory / "source.db"
-            target_path = directory / "target.db"
-            create_database(source_path)
-            create_database(target_path)
+            source_path, target_path = create_databases(directory)
             with sqlite3.connect(source_path) as source:
                 add_embedding(source, "needed", b"12345678")
                 add_embedding(source, "unused", b"abcdefgh")
@@ -67,14 +79,8 @@ class SeedEmbeddingsTests(unittest.TestCase):
     def test_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
-            source_path = directory / "source.db"
-            target_path = directory / "target.db"
-            create_database(source_path)
-            create_database(target_path)
-            with sqlite3.connect(source_path) as source:
-                add_embedding(source, "needed", b"12345678")
-            with sqlite3.connect(target_path) as target:
-                target.execute("INSERT INTO code_units VALUES (?)", ("needed",))
+            source_path, target_path = create_databases(directory)
+            add_needed_embedding(source_path, target_path, b"12345678")
 
             self.assertEqual(seed_embeddings(source_path, target_path), 1)
             self.assertEqual(seed_embeddings(source_path, target_path), 0)
@@ -116,14 +122,8 @@ class SeedEmbeddingsTests(unittest.TestCase):
     def test_rejects_malformed_embedding_blob(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
-            source_path = directory / "source.db"
-            target_path = directory / "target.db"
-            create_database(source_path)
-            create_database(target_path)
-            with sqlite3.connect(source_path) as source:
-                add_embedding(source, "needed", b"too short")
-            with sqlite3.connect(target_path) as target:
-                target.execute("INSERT INTO code_units VALUES (?)", ("needed",))
+            source_path, target_path = create_databases(directory)
+            add_needed_embedding(source_path, target_path, b"too short")
 
             with self.assertRaisesRegex(SeedError, "invalid embedding"):
                 seed_embeddings(source_path, target_path)

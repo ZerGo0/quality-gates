@@ -43,29 +43,34 @@ return shared()
 ```
 """
 
+CLUSTER_REPORT_NAME = "cluster-001.md"
+CHANGED_PATH = "backend/changed.go"
+
 
 class ReportTests(unittest.TestCase):
+    def find_clusters_between(
+        self, root: Path, current_report: str, base_report: str
+    ) -> list:
+        current_dir = root / "current"
+        base_dir = root / "base"
+        current_dir.mkdir()
+        base_dir.mkdir()
+        (current_dir / CLUSTER_REPORT_NAME).write_text(current_report, encoding="utf-8")
+        (base_dir / CLUSTER_REPORT_NAME).write_text(base_report, encoding="utf-8")
+        return find_new_clusters(
+            load_cluster_reports(current_dir),
+            load_cluster_reports(base_dir),
+            {CHANGED_PATH},
+        )
+
     def test_does_not_find_inherited_cluster_when_one_location_is_changed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            current_dir = root / "current"
-            base_dir = root / "base"
-            current_dir.mkdir()
-            base_dir.mkdir()
-            (current_dir / "cluster-001.md").write_text(
+            matches = self.find_clusters_between(
+                Path(temporary_directory),
                 CLUSTER_REPORT.replace(
                     "Hash: `abc123def456`", "Hash: `def456abc123`"
                 ).replace("lines 10-20", "lines 100-110"),
-                encoding="utf-8",
-            )
-            (base_dir / "cluster-001.md").write_text(
-                CLUSTER_REPORT, encoding="utf-8"
-            )
-
-            matches = find_new_clusters(
-                load_cluster_reports(current_dir),
-                load_cluster_reports(base_dir),
-                {"backend/changed.go"},
+                CLUSTER_REPORT,
             )
 
             self.assertEqual(matches, [])
@@ -73,30 +78,17 @@ class ReportTests(unittest.TestCase):
     def test_finds_cluster_with_a_new_changed_member(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
-            current_dir = root / "current"
-            base_dir = root / "base"
-            current_dir.mkdir()
-            base_dir.mkdir()
-            (current_dir / "cluster-001.md").write_text(
-                CLUSTER_REPORT, encoding="utf-8"
-            )
-            (base_dir / "cluster-001.md").write_text(
+            matches = self.find_clusters_between(
+                root,
+                CLUSTER_REPORT,
                 CLUSTER_REPORT.replace(
-                    "backend/changed.go", "backend/other.go"
+                    CHANGED_PATH, "backend/other.go"
                 ).replace("func changed()", "func other()"),
-                encoding="utf-8",
-            )
-
-            current_reports = load_cluster_reports(current_dir)
-            matches = find_new_clusters(
-                current_reports,
-                load_cluster_reports(base_dir),
-                {"backend/changed.go"},
             )
 
             self.assertEqual(len(matches), 1)
             self.assertEqual(matches[0][0].cluster_hash, "abc123def456")
-            self.assertEqual(matches[0][1][0].path, "backend/changed.go")
+            self.assertEqual(matches[0][1][0].path, CHANGED_PATH)
 
             output = render_errors(matches, root)
             self.assertIn(
@@ -105,60 +97,26 @@ class ReportTests(unittest.TestCase):
             )
             self.assertIn("[existing] backend/existing.go:30-40", output)
 
-    def test_does_not_find_cluster_after_a_duplicate_member_is_removed(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            current_dir = root / "current"
-            base_dir = root / "base"
-            current_dir.mkdir()
-            base_dir.mkdir()
-            current_report = CLUSTER_REPORT
-            base_report = CLUSTER_REPORT.replace(
-                "- `backend/existing.go` lines 30-40",
-                "- `backend/existing.go` lines 30-40\n"
-                "- `backend/removed.go` lines 50-60",
-            )
-            (current_dir / "cluster-001.md").write_text(
-                current_report, encoding="utf-8"
-            )
-            (base_dir / "cluster-001.md").write_text(
-                base_report, encoding="utf-8"
-            )
+    def test_counts_clusters_after_a_member_is_added_or_removed(self) -> None:
+        removed_member = CLUSTER_REPORT.replace(
+            "- `backend/existing.go` lines 30-40",
+            "- `backend/existing.go` lines 30-40\n- `backend/removed.go` lines 50-60",
+        )
+        added_copy = CLUSTER_REPORT.replace(
+            "- `backend/changed.go` lines 10-20",
+            "- `backend/changed.go` lines 10-20\n- `backend/changed.go` lines 50-60",
+        )
+        cases = (
+            ("duplicate member removed", CLUSTER_REPORT, removed_member, 0),
+            ("exact copy added in the same file", added_copy, CLUSTER_REPORT, 1),
+        )
+        for name, current_report, base_report, expected_count in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as temporary_directory:
+                matches = self.find_clusters_between(
+                    Path(temporary_directory), current_report, base_report
+                )
 
-            matches = find_new_clusters(
-                load_cluster_reports(current_dir),
-                load_cluster_reports(base_dir),
-                {"backend/changed.go"},
-            )
-
-            self.assertEqual(matches, [])
-
-    def test_finds_an_added_exact_copy_in_the_same_file(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            current_dir = root / "current"
-            base_dir = root / "base"
-            current_dir.mkdir()
-            base_dir.mkdir()
-            current_report = CLUSTER_REPORT.replace(
-                "- `backend/changed.go` lines 10-20",
-                "- `backend/changed.go` lines 10-20\n"
-                "- `backend/changed.go` lines 50-60",
-            )
-            (current_dir / "cluster-001.md").write_text(
-                current_report, encoding="utf-8"
-            )
-            (base_dir / "cluster-001.md").write_text(
-                CLUSTER_REPORT, encoding="utf-8"
-            )
-
-            matches = find_new_clusters(
-                load_cluster_reports(current_dir),
-                load_cluster_reports(base_dir),
-                {"backend/changed.go"},
-            )
-
-            self.assertEqual(len(matches), 1)
+                self.assertEqual(len(matches), expected_count)
 
     def test_renders_one_error_for_multiple_changed_locations_in_cluster(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -170,7 +128,7 @@ class ReportTests(unittest.TestCase):
             matches = find_new_clusters(
                 load_cluster_reports(report_dir),
                 [],
-                {"backend/changed.go", "backend/existing.go"},
+                {CHANGED_PATH, "backend/existing.go"},
             )
             output = render_errors(matches, report_dir)
 

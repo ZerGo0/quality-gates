@@ -100,10 +100,7 @@ class ResolveGitBaseTests(unittest.TestCase):
 
     def test_uses_origin_head_when_no_upstream_is_configured(self) -> None:
         with self._repository() as repository_root:
-            main_sha = self._commit(repository_root, "main.txt", "main\n", "main")
-            run_git(repository_root, "branch", "-M", "main")
-            run_git(repository_root, "checkout", "-q", "-b", "feature")
-            self._commit(repository_root, "feature.txt", "feature\n", "feature")
+            main_sha = self._main_with_feature(repository_root)
             run_git(repository_root, "update-ref", "refs/remotes/origin/HEAD", main_sha)
             run_git(repository_root, "update-ref", "refs/remotes/origin/main", main_sha)
 
@@ -167,12 +164,9 @@ class ResolveGitBaseTests(unittest.TestCase):
         self,
     ) -> None:
         with self._repository() as repository_root:
-            initial_sha = self._commit(
+            initial_sha = self._main_with_feature(
                 repository_root, "initial.txt", "initial\n", "initial"
             )
-            run_git(repository_root, "branch", "-M", "main")
-            run_git(repository_root, "checkout", "-q", "-b", "feature")
-            self._commit(repository_root, "feature.txt", "feature\n", "feature")
             run_git(repository_root, "checkout", "-q", "main")
             main_sha = self._commit(
                 repository_root, "main.txt", "main\n", "main change"
@@ -230,6 +224,12 @@ class ResolveGitBaseTests(unittest.TestCase):
         commit = self._commit(repository_root, name, contents, message)
         run_git(repository_root, "branch", "-M", "main")
         return commit
+
+    def _main_with_feature(self, repository_root: Path, *main_arguments: str) -> str:
+        main_sha = self._main(repository_root, *main_arguments)
+        run_git(repository_root, "checkout", "-q", "-b", "feature")
+        self._commit(repository_root, "feature.txt", "feature\n", "feature")
+        return main_sha
 
     def _track_feature(self, repository_root: Path, feature_commit: str) -> None:
         run_git(

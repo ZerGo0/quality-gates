@@ -11,6 +11,7 @@ sys.path.insert(0, str(QUALITY_GATES / "scripts"))
 
 import run_aislop
 import aislop_output
+import fallow_output
 
 
 class AislopRunnerTests(unittest.TestCase):
@@ -258,7 +259,7 @@ class AislopRunnerTests(unittest.TestCase):
             report_path=report,
         )
 
-        presentation = aislop_output.present_fallow(result, self.root)
+        presentation = fallow_output.present_fallow(result, self.root)
 
         self.assertEqual(
             presentation.summary, "1 dead-code issues, 1 clone groups, 0 health findings"
@@ -317,7 +318,7 @@ class AislopRunnerTests(unittest.TestCase):
             report_path=report_path,
         )
 
-        presentation = aislop_output.present_fallow(result, self.root)
+        presentation = fallow_output.present_fallow(result, self.root)
 
         self.assertEqual(
             presentation.summary,
@@ -365,7 +366,7 @@ class AislopRunnerTests(unittest.TestCase):
             report_path=report_path,
         )
 
-        presentation = aislop_output.present_fallow(result, self.root)
+        presentation = fallow_output.present_fallow(result, self.root)
 
         self.assertEqual(
             presentation.findings,
