@@ -10,3 +10,13 @@ tasks:
     cmds:
       - cmd: pnpm install --frozen-lockfile
       - cmd: cd slopo && uv sync --locked
+
+  aislop:
+    desc: Run agent quality gates on current changes
+    cmds:
+      - ./bin/quality-gates run
+
+  aislop:all:
+    desc: Run agent quality gates on the entire repository
+    cmds:
+      - ./bin/quality-gates run --all
