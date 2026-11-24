@@ -2,6 +2,7 @@ import { defineRule } from "@oxlint/plugins";
 import type { ESTree } from "@oxlint/plugins";
 
 type Parameter = ESTree.ParamPattern;
+
 type ParameterOwner =
   | ESTree.ArrowFunctionExpression
   | ESTree.Function
@@ -11,32 +12,36 @@ type ParameterOwner =
   | ESTree.TSFunctionType
   | ESTree.TSMethodSignature;
 
+const unknownAnnotationSuffix = /\s*:\s*unknown\s*$/u;
+
+function nestedParameter(parameter: Parameter): Parameter | null {
+  if (parameter.type === "TSParameterProperty") return parameter.parameter;
+
+  if (parameter.type === "RestElement") return parameter.argument;
+
+  if (parameter.type === "AssignmentPattern") return parameter.left;
+
+  return null;
+}
+
+function ownAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | null | undefined {
+  return "typeAnnotation" in parameter ? parameter.typeAnnotation : undefined;
+}
+
 function parameterAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | null | undefined {
-  if (parameter.type === "TSParameterProperty") {
-    return parameterAnnotation(parameter.parameter);
-  }
-  if (parameter.type === "RestElement") {
-    return parameter.typeAnnotation ?? parameterAnnotation(parameter.argument);
-  }
-  if (parameter.type === "AssignmentPattern") {
-    return parameter.typeAnnotation ?? parameter.left.typeAnnotation;
-  }
-  return parameter.typeAnnotation;
+  const nested = nestedParameter(parameter);
+
+  return ownAnnotation(parameter) ?? (nested === null ? undefined : parameterAnnotation(nested));
 }
 
 function parameterName(parameter: Parameter, sourceText: string): string {
-  if (parameter.type === "TSParameterProperty") {
-    return parameterName(parameter.parameter, sourceText);
-  }
-  if (parameter.type === "AssignmentPattern") {
-    return parameterName(parameter.left, sourceText);
-  }
-  if (parameter.type === "RestElement") {
-    return parameterName(parameter.argument, sourceText);
-  }
+  const nested = nestedParameter(parameter);
+
+  if (nested !== null) return parameterName(nested, sourceText);
+
   return parameter.type === "Identifier"
     ? parameter.name
-    : sourceText.replace(/\s*:\s*unknown\s*$/u, "");
+    : sourceText.replace(unknownAnnotationSuffix, "");
 }
 
 /** Disallow unknown inputs except explicitly named error-cause enrichment. */
@@ -56,9 +61,13 @@ export const noUnknownParametersRule = defineRule({
     const checkParameters = (node: ParameterOwner) => {
       for (const parameter of node.params) {
         const annotation = parameterAnnotation(parameter);
+
         if (annotation?.typeAnnotation.type !== "TSUnknownKeyword") continue;
+
         const name = parameterName(parameter, context.sourceCode.getText(parameter));
+
         if (name === "cause") continue;
+
         context.report({
           node: annotation.typeAnnotation,
           messageId: "unknownParameter",

@@ -1,11 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { type LineRange, readChangedLines, touchesChangedLines } from "./changed-lines.ts";
 import { readChangedFiles, readRepositoryFiles, repositoryRoot } from "./repository-files.ts";
 
-const ownPath = relative(repositoryRoot, fileURLToPath(import.meta.url));
+const ownPath = relative(repositoryRoot, import.meta.filename);
 const checkOnly = process.argv.includes("--check");
 const changesOnly = process.argv.includes("--changes");
 const scope = changesOnly ? "changed" : "repository";
@@ -56,7 +55,7 @@ type Rule = { re: RegExp; to: string };
 
 const rules: Rule[] = [
 	{ re: /\p{Cf}/gu, to: "" },
-	{ re: /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, to: "" },
+	{ re: /(?![\t\n\r\u0080-\u009F])\p{Cc}/gu, to: "" },
 	{ re: /\p{Dash_Punctuation}/gu, to: "-" },
 	{ re: /[\u201C\u201D\u201E\u201F\u2033\u301D\u301E\uFF02]/gu, to: '"' },
 	{ re: /[\u2018\u2019\u201A\u2032\u02BC\uFF07]/gu, to: "'" },
@@ -116,10 +115,10 @@ const charMap = new Map(
 	}),
 );
 
-const charClassSpecials = new Set(["\\", "^", "-", "]", "["]);
+const charClassSpecials = /[\\^\-\][]/gu;
 
 function escapeForCharClass(value: string): string {
-	return [...value].map((char) => (charClassSpecials.has(char) ? `\\${char}` : char)).join("");
+	return value.replaceAll(charClassSpecials, String.raw`\$&`);
 }
 
 const charMapPattern = new RegExp(
@@ -128,22 +127,27 @@ const charMapPattern = new RegExp(
 );
 
 function normalizeNfkc(text: string): string {
-	return text.replace(/[^…]+/gu, (segment) => segment.normalize("NFKC"));
+	return text.replaceAll(/[^…]+/gu, (segment) => segment.normalize("NFKC"));
 }
 
 function applyRules(text: string) {
 	let out = normalizeNfkc(text);
 	let replacements = out === text ? 0 : 1;
+
 	for (const { re, to } of rules) {
 		out = out.replace(re, (match) => {
 			if (match !== to) replacements++;
+
 			return to;
 		});
 	}
-	out = out.replace(charMapPattern, (match) => {
+
+	out = out.replaceAll(charMapPattern, (match) => {
 		replacements++;
+
 		return charMap.get(match) ?? match;
 	});
+
 	return { out, replacements };
 }
 
@@ -168,20 +172,35 @@ function cleanText(text: string, ranges: LineRange[] | undefined) {
 	return { out, replacements };
 }
 
+function ignoreMissingFile(error: NodeJS.ErrnoException): undefined {
+	if (error.code === "ENOENT") return undefined;
+
+	throw error;
+}
+
+async function readTextFile(path: string): Promise<string | undefined> {
+	if (binaryExtensions.has(extname(path).toLowerCase().slice(1))) return undefined;
+
+	const buffer = await readFile(path).catch(ignoreMissingFile);
+
+	if (buffer === undefined || buffer.includes(0)) return undefined;
+
+	return buffer.toString("utf8");
+}
+
 async function cleanFile(file: string, ranges: LineRange[] | undefined): Promise<number> {
-	if (binaryExtensions.has(extname(file).toLowerCase().slice(1))) return 0;
 	const path = resolve(repositoryRoot, file);
-	const buffer = await readFile(path).catch((error: NodeJS.ErrnoException) => {
-		if (error.code === "ENOENT") return undefined;
-		throw error;
-	});
-	if (buffer === undefined) return 0;
-	if (buffer.includes(0)) return 0;
-	const text = buffer.toString("utf8");
+
+	const text = await readTextFile(path);
+
+	if (text === undefined) return 0;
+
 	const { out, replacements } = cleanText(text, ranges);
 
 	if (out === text) return 0;
+
 	if (!checkOnly) await writeFile(path, out, "utf8");
+
 	return replacements;
 }
 
@@ -189,6 +208,7 @@ const files = (changesOnly ? readChangedFiles() : readRepositoryFiles()).filter(
 
 if (files.length === 0) {
 	console.log(`No ${scope} files for ai-cleanup`);
+
 	process.exit(0);
 }
 
@@ -196,11 +216,14 @@ const changedLines = changesOnly ? readChangedLines(files) : new Map<string, Lin
 const fixCommand = changesOnly ? "quality-gates cleanup --changes" : "quality-gates cleanup";
 
 let changedFiles = 0;
+
 for (const file of files) {
 	const replacements = await cleanFile(file, changedLines.get(file));
 
 	if (replacements === 0) continue;
+
 	changedFiles++;
+
 	console.log(
 		checkOnly
 			? `error: ${file}: ${replacements} AI typography replacement(s) needed; run ${fixCommand}`
@@ -211,4 +234,5 @@ for (const file of files) {
 console.log(
 	`ai-cleanup ${checkOnly ? "found" : "fixed"} ${changedFiles} of ${files.length} ${scope} file(s)`,
 );
+
 if (checkOnly && changedFiles > 0) process.exitCode = 1;

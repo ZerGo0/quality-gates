@@ -4,6 +4,8 @@ import type { ESTree, SourceCode } from "@oxlint/plugins";
 
 type TypeAssertion = ESTree.TSAsExpression | ESTree.TSTypeAssertion;
 
+const safetyMarker = /\bSAFETY\s*:/u;
+
 const commentOwnerKinds = new Set([
   "ExpressionStatement",
   "PropertyDefinition",
@@ -20,17 +22,28 @@ function isConstAssertion(node: TypeAssertion): boolean {
   );
 }
 
+function hasLeadingSafetyComment(
+  sourceCode: SourceCode,
+  current: ESTree.Node,
+  assertion: TypeAssertion,
+): boolean {
+  return sourceCode
+    .getCommentsBefore(current)
+    .some((comment) => comment.end <= assertion.start && safetyMarker.test(comment.value));
+}
+
+function isCommentBoundary(node: ESTree.Node): boolean {
+  return commentOwnerKinds.has(node.type) || node.parent.type === "Program";
+}
+
 function hasSafetyComment(sourceCode: SourceCode, node: TypeAssertion): boolean {
   let current: ESTree.Node = node;
+
   while (true) {
-    if (
-      sourceCode
-        .getCommentsBefore(current)
-        .some((comment) => comment.end <= node.start && /\bSAFETY\s*:/u.test(comment.value))
-    ) {
-      return true;
-    }
-    if (commentOwnerKinds.has(current.type) || current.parent.type === "Program") return false;
+    if (hasLeadingSafetyComment(sourceCode, current, node)) return true;
+
+    if (isCommentBoundary(current)) return false;
+
     current = current.parent;
   }
 }
@@ -51,6 +64,7 @@ export const requireSafetyCommentForTypeAssertionRule = defineRule({
   createOnce(context) {
     const checkAssertion = (node: TypeAssertion) => {
       if (isConstAssertion(node) || hasSafetyComment(context.sourceCode, node)) return;
+
       context.report({ node, messageId: "missingSafetyComment" });
     };
 

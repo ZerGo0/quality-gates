@@ -7,6 +7,16 @@ function containsForbiddenSymbolName(name: string): boolean {
   return name.toLowerCase().includes(FORBIDDEN_SYMBOL_NAME);
 }
 
+function isPropertyAccessName(node: ESTree.Node): boolean {
+  // Property access does not declare a name: libraries such as Zod own it.
+  // Object, class, and interface property declarations remain checked.
+  return (
+    node.parent.type === "MemberExpression" &&
+    !node.parent.computed &&
+    node.parent.property === node
+  );
+}
+
 /** Ban vague symbol names without rejecting property names owned by another API. */
 export const noForbiddenTermInSymbolNamesRule = defineRule({
   meta: {
@@ -22,14 +32,8 @@ export const noForbiddenTermInSymbolNamesRule = defineRule({
   },
   createOnce(context) {
     const reportForbiddenSymbolName = (node: ESTree.Node & { name: string }) => {
-      if (!containsForbiddenSymbolName(node.name)) return;
-      // Property access does not declare a name: libraries such as Zod own it.
-      // Object, class, and interface property declarations remain checked.
-      if (
-        node.parent.type === "MemberExpression" &&
-        !node.parent.computed &&
-        node.parent.property === node
-      ) return;
+      if (!containsForbiddenSymbolName(node.name) || isPropertyAccessName(node)) return;
+
       context.report({
         node,
         messageId: "forbiddenSymbolName",
