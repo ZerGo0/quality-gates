@@ -90,12 +90,13 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(matches[0][0].cluster_hash, "abc123def456")
             self.assertEqual(matches[0][1][0].path, CHANGED_PATH)
 
-            output = render_errors(matches, root)
+            output = render_errors(matches)
             self.assertIn(
                 "ERROR: backend/changed.go:10: new duplicate cluster abc123def456",
                 output,
             )
             self.assertIn("[existing] backend/existing.go:30-40", output)
+            self.assertIn(f"Report: {root / 'current' / CLUSTER_REPORT_NAME}", output)
 
     def test_counts_clusters_after_a_member_is_added_or_removed(self) -> None:
         removed_member = CLUSTER_REPORT.replace(
@@ -130,7 +131,7 @@ class ReportTests(unittest.TestCase):
                 [],
                 {CHANGED_PATH, "backend/existing.go"},
             )
-            output = render_errors(matches, report_dir)
+            output = render_errors(matches)
 
             self.assertEqual(output.count("ERROR:"), 1)
             self.assertIn("[changed] backend/changed.go:10-20", output)

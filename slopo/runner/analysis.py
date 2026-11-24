@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import chdir
+from dataclasses import replace
 from pathlib import Path
 
 from runner.console import emit
@@ -9,35 +10,25 @@ from runner.errors import RunError
 from runner.paths import Paths
 
 
-def load_config(paths: Paths, working_directory: Path):
+def load_config(
+    paths: Paths, working_directory: Path, database: Path, report_dir: Path
+):
     from slopo.config import load_config
 
     with chdir(working_directory):
-        return load_config(paths.config)
+        config = load_config(paths.config)
+    return replace(
+        config, db_file=database, report_dir=report_dir, ignore_file=paths.ignore_file
+    )
 
 
-def validate_current_config(paths: Paths, config: object) -> None:
+def validate_current_config(config: object) -> None:
     expected_api_base = f"http://{SERVER_HOST}:{ADAPTER_PORT}/v1"
     actual_api_base = config.embedding_params.get("api_base")
     if actual_api_base != expected_api_base:
         raise RunError(
             "Slopo runtime must use the repository-local embedding adapter at "
             f"{expected_api_base}, got {actual_api_base!r}"
-        )
-    if config.db_file.resolve() != paths.database.resolve():
-        raise RunError(
-            "SlopO must use the repository cache database at "
-            f"{paths.database.resolve()}, got {config.db_file.resolve()}"
-        )
-    if config.ignore_file.resolve() != paths.ignore_file.resolve():
-        raise RunError(
-            "SlopO must use the repository ignore file at "
-            f"{paths.ignore_file.resolve()}, got {config.ignore_file.resolve()}"
-        )
-    if config.report_dir.resolve() != paths.report_dir.resolve():
-        raise RunError(
-            "SlopO changed-files gate must inspect the configured report directory at "
-            f"{paths.report_dir.resolve()}, got {config.report_dir.resolve()}"
         )
     if not config.source_dir.is_dir():
         raise RunError(f"SlopO source directory is missing: {config.source_dir}")

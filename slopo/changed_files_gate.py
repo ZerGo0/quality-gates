@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import re
 import subprocess
-import sys
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -184,7 +182,6 @@ def _member_counts(report: ClusterReport) -> Counter[tuple[str, str]]:
 
 def render_errors(
     matches: Sequence[tuple[ClusterReport, tuple[Location, ...]]],
-    repository_root: Path,
 ) -> str:
     lines = [
         f"SlopO found {len(matches)} new duplicate-code error"
@@ -196,13 +193,11 @@ def render_errors(
             f"ERROR: {anchor.path}:{anchor.start_line}: new duplicate cluster "
             f"{report.cluster_hash} includes changed code"
         )
-        lines.extend(
-            _cluster_detail_lines(report, repository_root, set(changed_locations))
-        )
+        lines.extend(_cluster_detail_lines(report, set(changed_locations)))
     return "\n".join(lines)
 
 
-def render_clusters(reports: Sequence[ClusterReport], repository_root: Path) -> str:
+def render_clusters(reports: Sequence[ClusterReport]) -> str:
     lines = [
         f"SlopO found {len(reports)} duplicate-code cluster"
         f"{'s' if len(reports) != 1 else ''}:"
@@ -213,13 +208,12 @@ def render_clusters(reports: Sequence[ClusterReport], repository_root: Path) -> 
             f"ERROR: {anchor.path}:{anchor.start_line}: duplicate cluster "
             f"{report.cluster_hash}"
         )
-        lines.extend(_cluster_detail_lines(report, repository_root, None))
+        lines.extend(_cluster_detail_lines(report, None))
     return "\n".join(lines)
 
 
 def _cluster_detail_lines(
     report: ClusterReport,
-    repository_root: Path,
     changed_locations: set[Location] | None,
 ) -> list[str]:
     lines: list[str] = []
@@ -230,8 +224,7 @@ def _cluster_detail_lines(
         lines.append(
             f"  - {marker}{location.path}:{location.start_line}-{location.end_line}"
         )
-    relative_report = report.path.resolve().relative_to(repository_root.resolve())
-    lines.append(f"  Report: {relative_report}")
+    lines.append(f"  Report: {report.path}")
     return lines
 
 
@@ -267,54 +260,3 @@ def _run_git_paths(repository_root: Path, *arguments: str) -> list[str]:
     if output and not output.endswith(b"\0"):
         raise RuntimeError(f"git {' '.join(arguments)} returned malformed output")
     return [part.decode("utf-8") for part in output.split(b"\0") if part]
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Fail when changed code introduces a SlopO duplicate cluster."
-    )
-    parser.add_argument("action", choices=("clear", "check"))
-    parser.add_argument("--repository-root", required=True, type=Path)
-    parser.add_argument("--report-dir", required=True, type=Path)
-    parser.add_argument("--base-report-dir", type=Path)
-    parser.add_argument("--base-commit")
-    return parser
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
-    repository_root = args.repository_root.resolve(strict=True)
-    report_dir = args.report_dir.absolute()
-    if not report_dir.resolve(strict=False).is_relative_to(repository_root):
-        raise ValueError(f"SlopO report directory must be inside {repository_root}")
-
-    if args.action == "clear":
-        clear_generated_reports(report_dir)
-        return 0
-
-    if args.base_report_dir is None:
-        raise ValueError("--base-report-dir is required for the check action")
-    if args.base_commit is None:
-        raise ValueError("--base-commit is required for the check action")
-    base_report_dir = args.base_report_dir.absolute()
-    if not base_report_dir.resolve(strict=False).is_relative_to(repository_root):
-        raise ValueError(
-            f"SlopO base report directory must be inside {repository_root}"
-        )
-
-    changed_files = collect_changed_files(repository_root, args.base_commit)
-    matches = find_new_clusters(
-        load_cluster_reports(report_dir),
-        load_cluster_reports(base_report_dir),
-        changed_files,
-    )
-    if not matches:
-        print("SlopO found no new duplicate-code errors.")
-        return 0
-
-    print(render_errors(matches, repository_root), file=sys.stderr)
-    return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -10,6 +10,7 @@ QUALITY_GATES = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(QUALITY_GATES / "scripts"))
 
 import run_aislop
+import run_directories
 import aislop_output
 import fallow_output
 
@@ -20,6 +21,7 @@ class AislopRunnerTests(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         self.run_directory = self.root / ".task" / "aislop" / "test-run"
         self.run_directory.mkdir(parents=True)
+        self.repository_cache = self.root / "cache"
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -195,7 +197,9 @@ class AislopRunnerTests(unittest.TestCase):
     def test_stages_compare_aislop_and_fallow_with_the_change_base(self) -> None:
         stages = {
             stage.name: stage
-            for stage in run_aislop.build_stages(self.root, self.run_directory, "abc123")
+            for stage in run_aislop.build_stages(
+                self.root, self.run_directory, self.repository_cache, "abc123"
+            )
         }
 
         for name in ("aislop", "fallow"):
@@ -205,7 +209,9 @@ class AislopRunnerTests(unittest.TestCase):
     def test_full_repository_stages_drop_change_scoping(self) -> None:
         stages = {
             stage.name: stage
-            for stage in run_aislop.build_stages(self.root, self.run_directory, None)
+            for stage in run_aislop.build_stages(
+                self.root, self.run_directory, self.repository_cache, None
+            )
         }
 
         self.assertNotIn("--changes", stages["aislop"].command)
@@ -213,6 +219,46 @@ class AislopRunnerTests(unittest.TestCase):
         self.assertNotIn("--changes", stages["ai-cleanup"].command)
         self.assertNotIn("audit", stages["fallow"].command)
         self.assertIn("--all", stages["slopo"].command)
+
+    def test_stages_write_nothing_into_the_repository(self) -> None:
+        stages = {
+            stage.name: stage
+            for stage in run_aislop.build_stages(
+                self.root, self.run_directory, self.repository_cache, None
+            )
+        }
+
+        slopo_command = stages["slopo"].command
+        self.assertEqual(
+            slopo_command[slopo_command.index("--cache-dir") + 1],
+            str(self.repository_cache / "slopo"),
+        )
+        self.assertEqual(
+            stages["fallow"].environment["FALLOW_CACHE_DIR"],
+            str(self.repository_cache / "fallow"),
+        )
+        self.assertEqual(stages["aislop"].environment["AISLOP_NO_HISTORY"], "1")
+        fallow_command = stages["fallow"].command
+        fallow_output = Path(fallow_command[fallow_command.index("--output-file") + 1])
+        self.assertEqual(fallow_output, stages["fallow"].report_source)
+        self.assertTrue(fallow_output.is_relative_to(tempfile.gettempdir()))
+
+    def test_run_stage_moves_the_report_into_the_run_directory(self) -> None:
+        report_source = self.root / "outside" / "fallow.json"
+        report_source.parent.mkdir()
+        stage = run_aislop.Stage(
+            "fallow",
+            (sys.executable, "-c", f"open({str(report_source)!r}, 'w').write('{{}}')"),
+            self.root,
+            report_filename="fallow.json",
+            report_source=report_source,
+        )
+
+        result = run_aislop.run_stage(stage, self.run_directory)
+
+        self.assertEqual(result.report_path, self.run_directory / "fallow.json")
+        self.assertEqual(result.report_path.read_text(), "{}")
+        self.assertFalse(report_source.exists())
 
     def test_fallow_repository_report_lists_every_finding(self) -> None:
         report = self.run_directory / "fallow.json"
@@ -419,7 +465,7 @@ class AislopRunnerTests(unittest.TestCase):
         matching_file = artifact_root / "20260802T120000Z-99-abcdefgh"
         matching_file.write_text("not a directory")
 
-        run_aislop.prune_run_directories(artifact_root, retain=3)
+        run_directories.prune_run_directories(artifact_root, retain=3)
 
         remaining = {path.name for path in artifact_root.iterdir()}
         self.assertEqual(
@@ -442,22 +488,22 @@ class AislopRunnerTests(unittest.TestCase):
         newest = artifact_root / "20260904T120000Z-104-abcdefgh"
         for run in (oldest, active, stale, newest):
             run.mkdir()
-        (active / run_aislop.ACTIVE_MARKER).write_text(f"{os.getpid()}\n")
-        (stale / run_aislop.ACTIVE_MARKER).write_text("999999999\n")
+        (active / run_directories.ACTIVE_MARKER).write_text(f"{os.getpid()}\n")
+        (stale / run_directories.ACTIVE_MARKER).write_text("999999999\n")
 
-        run_aislop.prune_run_directories(artifact_root, retain=2)
+        run_directories.prune_run_directories(artifact_root, retain=2)
 
         remaining = {path.name for path in artifact_root.iterdir()}
         self.assertEqual(remaining, {active.name, oldest.name, newest.name})
 
     def test_run_directory_lifecycle_clears_its_active_marker(self) -> None:
-        run_directory = run_aislop.create_run_directory(self.root)
+        run_directory = run_directories.create_run_directory(self.root / "reports")
 
-        self.assertTrue((run_directory / run_aislop.ACTIVE_MARKER).is_file())
+        self.assertTrue((run_directory / run_directories.ACTIVE_MARKER).is_file())
 
-        run_aislop.finish_run_directory(run_directory)
+        run_directories.finish_run_directory(run_directory)
 
-        self.assertFalse((run_directory / run_aislop.ACTIVE_MARKER).exists())
+        self.assertFalse((run_directory / run_directories.ACTIVE_MARKER).exists())
 
 
 if __name__ == "__main__":

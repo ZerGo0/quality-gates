@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -13,24 +12,16 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
-from datetime import UTC, datetime
-from fcntl import LOCK_EX, LOCK_UN, flock
 from pathlib import Path
 from threading import Event, Lock
-from typing import Callable, Iterator, Sequence
+from typing import Callable, Sequence
 
 from aislop_output import Stage, StageResult, relative_path, render_results
-
-MAX_RETAINED_RUNS = 20
-ACTIVE_MARKER = ".active"
-RUN_DIRECTORY_NAME = re.compile(
-    r"^(?P<timestamp>\d{8}T\d{6}Z)-(?P<pid>\d+)-[A-Za-z0-9_-]+$"
-)
-
+from run_directories import create_run_directory, finish_run_directory
 
 QUALITY_GATES = Path(__file__).resolve().parents[1]
 NODE_BIN = QUALITY_GATES / "node_modules" / ".bin"
+REPOSITORY_CACHE_VARIABLE = "QUALITY_GATES_REPOSITORY_CACHE"
 
 
 def repository_root() -> Path:
@@ -40,147 +31,18 @@ def repository_root() -> Path:
     return Path(toplevel.strip())
 
 
-def validate_artifact_root(root: Path) -> Path:
-    artifact_root = root / ".task" / "aislop"
-    artifact_root.mkdir(parents=True, exist_ok=True)
-    if artifact_root.is_symlink():
-        raise RuntimeError(f"Refusing to use symlinked report directory: {artifact_root}")
-    try:
-        artifact_root.resolve().relative_to(root.resolve())
-    except ValueError as error:
-        raise RuntimeError(
-            f"Aislop report directory must remain inside {root}: {artifact_root}"
-        ) from error
-    return artifact_root
-
-
-@contextmanager
-def retention_lock(artifact_root: Path) -> Iterator[None]:
-    lock_path = artifact_root / ".retention.lock"
-    with lock_path.open("a+b") as lock_file:
-        flock(lock_file.fileno(), LOCK_EX)
-        try:
-            yield
-        finally:
-            flock(lock_file.fileno(), LOCK_UN)
-
-
-def create_run_directory(root: Path) -> Path:
-    artifact_root = validate_artifact_root(root)
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    with retention_lock(artifact_root):
-        run_directory = Path(
-            tempfile.mkdtemp(prefix=f"{timestamp}-{os.getpid()}-", dir=artifact_root)
-        )
-        mark_run_active(run_directory)
-        prune_run_directories(artifact_root)
-    return run_directory
-
-
-def process_is_alive(process_id: int) -> bool:
-    if process_id <= 0:
-        return False
-    try:
-        os.kill(process_id, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def run_is_active(run_directory: Path) -> bool:
-    marker = run_directory / ACTIVE_MARKER
-    if marker.is_symlink():
-        return True
-    if not marker.exists():
-        return False
-    if not marker.is_file():
-        return True
-    try:
-        process_id = int(marker.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return True
-    return process_is_alive(process_id)
-
-
-def mark_run_active(run_directory: Path) -> None:
-    (run_directory / ACTIVE_MARKER).write_text(f"{os.getpid()}\n", encoding="utf-8")
-
-
-def clear_active_marker(run_directory: Path) -> None:
-    marker = run_directory / ACTIVE_MARKER
-    if marker.is_symlink():
-        raise RuntimeError(f"Refusing to remove symlinked active marker: {marker}")
-    try:
-        marker_process_id = int(marker.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError) as error:
-        raise RuntimeError(f"Could not validate aislop active marker: {marker}") from error
-    if marker_process_id != os.getpid():
-        raise RuntimeError(f"Refusing to remove another process's marker: {marker}")
-    marker.unlink(missing_ok=True)
-
-
-def is_generated_run_name(name: str) -> bool:
-    match = RUN_DIRECTORY_NAME.fullmatch(name)
-    if match is None or int(match.group("pid")) <= 0:
-        return False
-    try:
-        datetime.strptime(match.group("timestamp"), "%Y%m%dT%H%M%SZ")
-    except ValueError:
-        return False
-    return True
-
-
-def generated_run_directories(artifact_root: Path) -> list[Path]:
-    directories: list[Path] = []
-    with os.scandir(artifact_root) as entries:
-        for entry in entries:
-            if entry.is_symlink() or not entry.is_dir(follow_symlinks=False):
-                continue
-            if is_generated_run_name(entry.name):
-                directories.append(Path(entry.path))
-    return directories
-
-
-def remove_generated_run(run_directory: Path, artifact_root: Path) -> None:
-    resolved_root = artifact_root.resolve()
-    resolved_run = run_directory.resolve()
-    if run_directory.is_symlink() or resolved_run.parent != resolved_root:
-        raise RuntimeError(f"Refusing to remove unsafe report directory: {run_directory}")
-    if not is_generated_run_name(run_directory.name):
-        raise RuntimeError(f"Refusing to remove unknown report directory: {run_directory}")
-    shutil.rmtree(run_directory)
-
-
-def prune_run_directories(
-    artifact_root: Path, retain: int = MAX_RETAINED_RUNS
-) -> None:
-    if retain < 1:
-        raise ValueError("Quality-gate report retention must be at least one run")
-    generated = generated_run_directories(artifact_root)
-    active = [directory for directory in generated if run_is_active(directory)]
-    completed = sorted(
-        (directory for directory in generated if directory not in active),
-        key=lambda directory: directory.name,
-        reverse=True,
-    )
-    for expired in completed[retain:]:
-        remove_generated_run(expired, artifact_root)
-
-
-def finish_run_directory(run_directory: Path) -> None:
-    artifact_root = run_directory.parent
-    with retention_lock(artifact_root):
-        clear_active_marker(run_directory)
-        prune_run_directories(artifact_root)
+def repository_cache_directory() -> Path:
+    repository_cache = Path(os.environ.get(REPOSITORY_CACHE_VARIABLE, ""))
+    if not repository_cache.is_absolute():
+        raise SystemExit(f"{REPOSITORY_CACHE_VARIABLE} must be an absolute path")
+    return repository_cache
 
 
 def build_stages(
-    root: Path, run_directory: Path, base: str | None
+    root: Path, run_directory: Path, repository_cache: Path, base: str | None
 ) -> tuple[Stage, ...]:
     scripts = QUALITY_GATES / "scripts"
-    fallow_report = run_directory / "fallow.json"
+    fallow_report = Path(tempfile.gettempdir()) / f"{run_directory.name}-fallow.json"
     full_repository = base is None
     aislop_scope = () if full_repository else ("--changes", "--base", base)
     aislop_flags = ("--json", "--ignore", "knip/skipped")
@@ -194,7 +56,7 @@ def build_stages(
             name="aislop",
             command=(str(NODE_BIN / "aislop"), "scan", *aislop_scope, ".", *aislop_flags),
             cwd=root,
-            environment={"DO_NOT_TRACK": "1"},
+            environment={"DO_NOT_TRACK": "1", "AISLOP_NO_HISTORY": "1"},
             parallel=True,
         ),
         Stage(
@@ -223,12 +85,20 @@ def build_stages(
                 str(fallow_report),
             ),
             cwd=root,
+            environment={"FALLOW_CACHE_DIR": str(repository_cache / "fallow")},
             report_filename="fallow.json",
+            report_source=fallow_report,
             parallel=True,
         ),
         Stage(
             name="slopo",
-            command=("python3", str(QUALITY_GATES / "slopo" / "run.py"), *file_scope),
+            command=(
+                "python3",
+                str(QUALITY_GATES / "slopo" / "run.py"),
+                "--cache-dir",
+                str(repository_cache / "slopo"),
+                *file_scope,
+            ),
             cwd=root,
             parallel=True,
         ),
@@ -337,6 +207,8 @@ def run_stage(
     report_path = None
     if stage.report_filename is not None:
         report_path = run_directory / stage.report_filename
+    if stage.report_source is not None and stage.report_source.is_file():
+        shutil.move(stage.report_source, report_path)
     return StageResult(
         stage=stage,
         exit_code=exit_code,
@@ -412,7 +284,8 @@ def main() -> int:
     parser.add_argument("--all", action="store_true", dest="full_repository")
     arguments = parser.parse_args()
     root = repository_root()
-    run_directory = create_run_directory(root)
+    repository_cache = repository_cache_directory()
+    run_directory = create_run_directory(repository_cache / "reports")
     try:
         base = (
             None
@@ -420,7 +293,9 @@ def main() -> int:
             else os.environ.get("QUALITY_GATES_BASE", "HEAD")
         )
         exit_code = run_pipeline(
-            build_stages(root, run_directory, base), run_directory, root
+            build_stages(root, run_directory, repository_cache, base),
+            run_directory,
+            root,
         )
     except KeyboardInterrupt:
         partial_logs = relative_path(run_directory, root)

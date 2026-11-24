@@ -5,7 +5,8 @@ set -euo pipefail
 readonly TOOL_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
 readonly SLOPO_DIR="$TOOL_DIR/slopo"
 readonly INSTALL_STAMP="$TOOL_DIR/.install-stamp"
-readonly ARTIFACT_DIRECTORIES=(.task/aislop/ .slopo/)
+readonly CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/quality-gates"
+readonly REPOSITORY_KEY_LENGTH=16
 
 usage() {
   cat <<'EOF'
@@ -49,17 +50,10 @@ enter_repository() {
   cd "$root"
 }
 
-exclude_artifacts() {
-  local exclude_file directory
-  exclude_file="$(git rev-parse --git-path info/exclude)"
-  for directory in "${ARTIFACT_DIRECTORIES[@]}"; do
-    git check-ignore -q --no-index -- "$directory" && continue
-    mkdir -p "$(dirname "$exclude_file")"
-    if [[ -s "$exclude_file" && -n "$(tail -c 1 "$exclude_file")" ]]; then
-      printf '\n' >>"$exclude_file"
-    fi
-    printf '/%s\n' "$directory" >>"$exclude_file"
-  done
+export_repository_cache() {
+  local key
+  key="$(printf '%s' "$PWD" | shasum -a 256 | cut -c "1-$REPOSITORY_KEY_LENGTH")"
+  export QUALITY_GATES_REPOSITORY_CACHE="$CACHE_ROOT/repositories/$(basename "$PWD")-$key"
 }
 
 export_change_base() {
@@ -106,7 +100,7 @@ case "$command" in
     [[ "$full_repository" == false || -z "$base" ]] || die '--all and --base cannot be combined'
     enter_repository
     ensure_dependencies
-    exclude_artifacts
+    export_repository_cache
     if [[ "$full_repository" == true ]]; then
       exec python3 "$TOOL_DIR/scripts/run_aislop.py" --all
     fi

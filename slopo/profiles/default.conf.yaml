@@ -31,10 +31,6 @@ source_dir_exclude:
   - "**/src/locale/"
   - "**/src/locales/"
 
-db_file: .slopo/repository/slopo.db
-report_dir: .slopo/repository/report
-ignore_file: .quality-gates/slopo.ignore.txt
-
 embedding_model: jina_ai/jina-code-embeddings-0.5b
 embedding_dimensions: 256
 embedding_api_key: local

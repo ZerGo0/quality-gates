@@ -27,7 +27,7 @@ quality-gates cleanup --changes    # fix AI typography in changed lines only
 
 On a branch, current changes are all files that differ from the merge-base with the default branch (`origin/HEAD`, `origin/main`, `origin/master`, then local `main` or `master`), committed or not. On `main` and `master`, they are the uncommitted changes. `--base <ref>` compares with `<ref>` instead. anti-slop and ai-cleanup report only findings on changed lines (anti-slop also on the line below a change); old findings elsewhere in a changed file do not fail the gate.
 
-Reports go to `.task/aislop/` and the SlopO index goes to `.slopo/repository/`. `quality-gates run` adds both to `.git/info/exclude` unless the repository already ignores them.
+Reports and the SlopO index go to `${XDG_CACHE_HOME:-~/.cache}/quality-gates/repositories/<name>-<hash>/`, one folder for each worktree path. The run summary prints the report paths. The gates write nothing into the repository.
 
 ## Per-repository config
 
@@ -35,8 +35,8 @@ All files are optional:
 
 - `.aislopignore`: paths that anti-slop and ai-cleanup skip
 - `.aislop/config.yml`, `.fallowrc.jsonc`: aislop and fallow config
-- `.quality-gates/slopo.conf.yaml`: SlopO profile. Without it, `slopo/profiles/default.conf.yaml` applies. Start from a copy of that file. Keep `db_file`, `report_dir`, and `ignore_file` unchanged.
-- `.quality-gates/slopo.ignore.txt`: dismissed SlopO cluster hashes. SlopO creates it on the first run. Commit it.
+- `.quality-gates/slopo.conf.yaml`: SlopO profile. Without it, `slopo/profiles/default.conf.yaml` applies. Start from a copy of that file. quality-gates sets `db_file`, `report_dir`, and `ignore_file` itself.
+- `.quality-gates/slopo.ignore.txt`: dismissed SlopO cluster hashes. Without it, SlopO keeps them in the repository cache folder. Move that file here to commit it.
 
 ## Update
 

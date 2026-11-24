@@ -8,7 +8,6 @@ import signal
 import subprocess
 import sys
 from contextlib import chdir
-from dataclasses import replace
 from pathlib import Path
 from types import FrameType
 from typing import NoReturn, Sequence
@@ -37,8 +36,10 @@ def _run_current(paths: Paths, services: EmbeddingServices) -> None:
 
     paths.report_dir.mkdir(parents=True, exist_ok=True)
     remove_incompatible_database(paths.database)
-    config = load_config(paths, paths.repository_root)
-    validate_current_config(paths, config)
+    config = load_config(
+        paths, paths.repository_root, paths.database, paths.report_dir
+    )
+    validate_current_config(config)
     with chdir(paths.repository_root):
         missing_count = index(config)
         embed(config, missing_count, services)
@@ -94,9 +95,8 @@ def _run_baseline(
     if status != 1:
         raise RunError("The SlopO baseline cache could not be read.")
 
-    config = replace(
-        load_config(paths, paths.base_worktree),
-        ignore_file=paths.ignore_file.resolve(),
+    config = load_config(
+        paths, paths.base_worktree, paths.base_database, paths.base_report_dir
     )
     with chdir(paths.base_worktree):
         index(config)
@@ -124,7 +124,7 @@ def _run_changed_files_gate(paths: Paths, comparison_commit: str) -> int:
     if not matches:
         print("SlopO found no new duplicate-code errors.")
         return 0
-    print(render_errors(matches, paths.repository_root), file=sys.stderr)
+    print(render_errors(matches), file=sys.stderr)
     return 1
 
 
@@ -132,6 +132,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the repository SlopO changed-files gate."
     )
+    parser.add_argument("--cache-dir", type=Path, required=True)
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument("--base", "--changed-since", dest="explicit_base")
     scope.add_argument("--all", action="store_true", dest="full_repository")
@@ -149,7 +150,7 @@ def _run_full_repository_gate(paths: Paths) -> int:
     if not reports:
         print("SlopO found no duplicate-code clusters.")
         return 0
-    print(render_clusters(reports, paths.repository_root), file=sys.stderr)
+    print(render_clusters(reports), file=sys.stderr)
     return 1
 
 
@@ -182,11 +183,14 @@ def _repository_root() -> Path:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    paths = Paths.discover(_repository_root())
+    parser = _build_parser()
+    arguments = parser.parse_args(argv)
+    if not arguments.cache_dir.is_absolute():
+        parser.error("--cache-dir must be an absolute path")
+    paths = Paths.discover(_repository_root(), arguments.cache_dir)
     try:
         bootstrap(paths)
         sys.stdout.reconfigure(line_buffering=True)
-        arguments = _build_parser().parse_args(argv)
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
         return _run(paths, arguments.explicit_base, arguments.full_repository)

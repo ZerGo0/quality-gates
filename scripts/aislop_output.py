@@ -25,6 +25,7 @@ class Stage:
     cwd: Path
     environment: dict[str, str] = field(default_factory=dict)
     report_filename: str | None = None
+    report_source: Path | None = None
     parallel: bool = False
 
     def validate(self) -> None:

@@ -25,29 +25,37 @@ class RunTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
         self.database = self.root / "slopo.db"
+        self.cache = self.root / "cache"
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
-    def test_uses_the_default_profile_without_a_repository_config(self) -> None:
-        paths = run_paths.Paths.discover(self.root)
+    def test_keeps_generated_files_in_the_cache_without_repository_files(self) -> None:
+        paths = run_paths.Paths.discover(self.root, self.cache)
 
         self.assertEqual(paths.config, SLOPO_PROJECT / "profiles" / "default.conf.yaml")
-        self.assertEqual(paths.database, self.root / ".slopo" / "repository" / "slopo.db")
-        self.assertEqual(
-            paths.ignore_file, self.root / ".quality-gates" / "slopo.ignore.txt"
-        )
+        self.assertEqual(paths.database, self.cache / "slopo.db")
+        self.assertEqual(paths.report_dir, self.cache / "report")
+        self.assertEqual(paths.base_worktree, self.cache / "base-worktree")
+        self.assertEqual(paths.base_database, self.cache / "base" / "slopo.db")
+        self.assertEqual(paths.ignore_file, self.cache / "slopo.ignore.txt")
 
-    def test_prefers_the_repository_config(self) -> None:
-        config = self.root / ".quality-gates" / "slopo.conf.yaml"
-        config.parent.mkdir()
+    def test_prefers_the_repository_config_and_ignore_file(self) -> None:
+        config_dir = self.root / ".quality-gates"
+        config_dir.mkdir()
+        config = config_dir / "slopo.conf.yaml"
         config.write_text("source_dir: .\n", encoding="utf-8")
+        ignore_file = config_dir / "slopo.ignore.txt"
+        ignore_file.write_text("", encoding="utf-8")
 
-        self.assertEqual(run_paths.Paths.discover(self.root).config, config)
+        paths = run_paths.Paths.discover(self.root, self.cache)
+
+        self.assertEqual(paths.config, config)
+        self.assertEqual(paths.ignore_file, ignore_file)
 
     def test_keeps_the_runtime_in_the_user_cache(self) -> None:
         with patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.root / "cache")}):
-            paths = run_paths.Paths.discover(self.root)
+            paths = run_paths.Paths.discover(self.root, self.cache)
 
         self.assertEqual(
             paths.runtime_dir, self.root / "cache" / "quality-gates" / "llama.cpp"
@@ -90,7 +98,9 @@ class RunTests(unittest.TestCase):
 
     def test_stops_the_embedding_process_group(self) -> None:
         process = subprocess.Popen(["sleep", "30"], start_new_session=True)
-        services = embedding_services.EmbeddingServices(run_paths.Paths.discover(self.root), Path("llama"))
+        services = embedding_services.EmbeddingServices(
+            run_paths.Paths.discover(self.root, self.cache), Path("llama")
+        )
         services.adapter = process
         try:
             services.stop()
@@ -131,11 +141,7 @@ class BaselineWorktreeTests(unittest.TestCase):
         self.cache = self.root / "cache"
         self.cache.mkdir()
         self.baseline = self.cache / "base-worktree"
-        self.paths = replace(
-            run_paths.Paths.discover(self.repository),
-            repository_cache=self.cache,
-            base_worktree=self.baseline,
-        )
+        self.paths = run_paths.Paths.discover(self.repository, self.cache)
 
     def test_discards_dirty_worktree_and_reuses_clean_replacement(self) -> None:
         baseline_worktree.prepare_base_worktree(self.paths, self.first_commit)
