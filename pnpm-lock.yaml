@@ -175,6 +175,9 @@ importers:
 
   .:
     dependencies:
+      '@oxlint/plugins':
+        specifier: ^1.94.0
+        version: 1.94.0
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -185,9 +188,6 @@ importers:
       '@nkzw/oxlint-config':
         specifier: ^3.0.1
         version: 3.0.1(eslint@10.15.0(jiti@2.7.0))(oxlint@1.94.0)(tsrs@7.1.0-beta.tsrs3)(typescript@6.0.3)
-      '@oxlint/plugins':
-        specifier: ^1.94.0
-        version: 1.94.0
       aislop:
         specifier: ^0.22.1
         version: 0.22.1

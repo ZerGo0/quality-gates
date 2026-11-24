@@ -1,4 +1,5 @@
 {
 	"$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
-	"entry": ["anti-slop.oxlint.config.ts", "scripts/*.ts"]
+	"entry": ["anti-slop.oxlint.config.ts", "scripts/*.ts"],
+	"ignoreDependencies": ["aislop"]
 }
