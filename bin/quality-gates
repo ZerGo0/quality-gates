@@ -14,12 +14,14 @@ Usage: quality-gates <command>
 
 Commands:
   run [--base <ref> | --all]                     Run the quality gates on the current changes
+  clear-cache [--all]                            Remove the cache of this repository, or of all repositories
   cleanup [--check] [--changes [--base <ref>]]   Replace AI typography in repository files
   setup                                          Install llama.cpp and the SlopO embedding model
 
 Changes are the files that differ from the merge-base with the default branch,
 or the uncommitted changes on main and master. --base <ref> compares with <ref> instead.
-run --all checks the entire repository.
+run --all checks the entire repository. Caches unused for 30 days, or whose
+repository no longer exists, are removed automatically.
 EOF
 }
 
@@ -54,6 +56,10 @@ export_repository_cache() {
   local key
   key="$(printf '%s' "$PWD" | shasum -a 256 | cut -c "1-$REPOSITORY_KEY_LENGTH")"
   export QUALITY_GATES_REPOSITORY_CACHE="$CACHE_ROOT/repositories/$(basename "$PWD")-$key"
+}
+
+repository_cache() {
+  python3 "$TOOL_DIR/scripts/gates/repository_cache.py" "$@"
 }
 
 export_change_base() {
@@ -101,11 +107,22 @@ case "$command" in
     enter_repository
     ensure_dependencies
     export_repository_cache
+    repository_cache prepare "$QUALITY_GATES_REPOSITORY_CACHE" "$PWD"
     if [[ "$full_repository" == true ]]; then
-      exec python3 "$TOOL_DIR/scripts/run_aislop.py" --all
+      exec python3 "$TOOL_DIR/scripts/gates/run_aislop.py" --all
     fi
     export_change_base
-    exec python3 "$TOOL_DIR/scripts/run_aislop.py"
+    exec python3 "$TOOL_DIR/scripts/gates/run_aislop.py"
+    ;;
+  clear-cache)
+    [[ ${#arguments[@]} -eq 0 && -z "$base" ]] || die 'clear-cache accepts only --all'
+    if [[ "$full_repository" == true ]]; then
+      repository_cache clear-all "$CACHE_ROOT/repositories"
+      exit
+    fi
+    enter_repository
+    export_repository_cache
+    repository_cache clear "$QUALITY_GATES_REPOSITORY_CACHE"
     ;;
   cleanup)
     [[ "$full_repository" == false ]] || die '--all is only for run; cleanup without --changes covers all files'

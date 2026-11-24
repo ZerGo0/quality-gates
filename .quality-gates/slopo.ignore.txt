@@ -3,4 +3,5 @@
 # A hash covers each unit's code body and its path relative to the index root.
 # It changes when the code or that path changes, so the cluster re-surfaces.
 # Re-indexing from a different root shifts every path, changing the hashes.
-38c018eb32ec
+85a8fddc74ab
+b169f47c3601

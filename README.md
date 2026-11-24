@@ -23,11 +23,13 @@ quality-gates run --base <ref>     # all gates on changes since <ref>
 quality-gates run --all            # all gates on the entire repository
 quality-gates cleanup              # fix AI typography in all files
 quality-gates cleanup --changes    # fix AI typography in changed lines only
+quality-gates clear-cache          # remove this repository's cache
+quality-gates clear-cache --all    # remove the caches of all repositories
 ```
 
 On a branch, current changes are all files that differ from the merge-base with the default branch (`origin/HEAD`, `origin/main`, `origin/master`, then local `main` or `master`), committed or not. On `main` and `master`, they are the uncommitted changes. `--base <ref>` compares with `<ref>` instead. anti-slop and ai-cleanup report only findings on changed lines (anti-slop also on the line below a change); old findings elsewhere in a changed file do not fail the gate.
 
-Reports and the SlopO index go to `${XDG_CACHE_HOME:-~/.cache}/quality-gates/repositories/<name>-<hash>/`, one folder for each worktree path. The run summary prints the report paths. The gates write nothing into the repository.
+Reports and the SlopO index go to `${XDG_CACHE_HOME:-~/.cache}/quality-gates/repositories/<name>-<hash>/`, one folder for each worktree path. The run summary prints the report paths. The gates write nothing into the repository. Each run removes caches unused for 30 days, and caches whose repository no longer exists.
 
 ## Per-repository config
 

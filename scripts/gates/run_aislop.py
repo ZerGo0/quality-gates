@@ -19,7 +19,7 @@ from typing import Callable, Sequence
 from aislop_output import Stage, StageResult, relative_path, render_results
 from run_directories import create_run_directory, finish_run_directory
 
-QUALITY_GATES = Path(__file__).resolve().parents[1]
+QUALITY_GATES = Path(__file__).resolve().parents[2]
 NODE_BIN = QUALITY_GATES / "node_modules" / ".bin"
 REPOSITORY_CACHE_VARIABLE = "QUALITY_GATES_REPOSITORY_CACHE"
 

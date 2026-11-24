@@ -7,7 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 
 QUALITY_GATES = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(QUALITY_GATES / "scripts"))
+sys.path.insert(0, str(QUALITY_GATES / "scripts" / "gates"))
 
 import run_aislop
 import run_directories
