@@ -1,0 +1,12 @@
+version: "3"
+
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+output: prefixed
+
+tasks:
+  install:
+    desc: Install the dependencies
+    cmds:
+      - cmd: pnpm install --frozen-lockfile
+      - cmd: cd slopo && uv sync --locked
