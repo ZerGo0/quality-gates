@@ -673,7 +673,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run the repository SlopO changed-files gate."
     )
-    parser.add_argument("--base", "--changed-since", dest="explicit_base")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--base", "--changed-since", dest="explicit_base")
+    scope.add_argument("--all", action="store_true", dest="full_repository")
     return parser
 
 
@@ -681,7 +683,18 @@ def _signal_handler(signum: int, _frame: FrameType | None) -> NoReturn:
     raise SignalExit(signum)
 
 
-def _run(paths: Paths, explicit_base: str | None) -> int:
+def _run_full_repository_gate(paths: Paths) -> int:
+    from changed_files_gate import load_cluster_reports, render_clusters
+
+    reports = load_cluster_reports(paths.report_dir)
+    if not reports:
+        print("SlopO found no duplicate-code clusters.")
+        return 0
+    print(render_clusters(reports, paths.repository_root), file=sys.stderr)
+    return 1
+
+
+def _run(paths: Paths, explicit_base: str | None, full_repository: bool) -> int:
     from resolve_git_base import resolve_git_base
     from run_lock import exclusive_lock
 
@@ -690,10 +703,14 @@ def _run(paths: Paths, explicit_base: str | None) -> int:
     paths.repository_cache.mkdir(parents=True, exist_ok=True)
     services = EmbeddingServices(paths, llama)
     with exclusive_lock(paths.run_lock):
-        resolved = resolve_git_base(paths.repository_root, explicit_base)
-        print(resolved.description, file=sys.stderr)
+        resolved = None
+        if not full_repository:
+            resolved = resolve_git_base(paths.repository_root, explicit_base)
+            print(resolved.description, file=sys.stderr)
         try:
             _run_current(paths, services)
+            if resolved is None:
+                return _run_full_repository_gate(paths)
             _run_baseline(paths, resolved.snapshot_commit, services)
             return _run_changed_files_gate(paths, resolved.comparison_commit)
         finally:
@@ -713,7 +730,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         arguments = _build_parser().parse_args(argv)
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
-        return _run(paths, arguments.explicit_base)
+        return _run(paths, arguments.explicit_base, arguments.full_repository)
     except SkipRun as error:
         print(error, file=sys.stderr)
         return 0

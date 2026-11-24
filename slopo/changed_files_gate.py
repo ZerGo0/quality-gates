@@ -196,16 +196,43 @@ def render_errors(
             f"ERROR: {anchor.path}:{anchor.start_line}: new duplicate cluster "
             f"{report.cluster_hash} includes changed code"
         )
-        changed_set = set(changed_locations)
-        for location in report.locations:
-            marker = "changed" if location in changed_set else "existing"
-            lines.append(
-                f"  - [{marker}] {location.path}:"
-                f"{location.start_line}-{location.end_line}"
-            )
-        relative_report = report.path.resolve().relative_to(repository_root.resolve())
-        lines.append(f"  Report: {relative_report}")
+        lines.extend(
+            _cluster_detail_lines(report, repository_root, set(changed_locations))
+        )
     return "\n".join(lines)
+
+
+def render_clusters(reports: Sequence[ClusterReport], repository_root: Path) -> str:
+    lines = [
+        f"SlopO found {len(reports)} duplicate-code cluster"
+        f"{'s' if len(reports) != 1 else ''}:"
+    ]
+    for report in reports:
+        anchor = report.locations[0]
+        lines.append(
+            f"ERROR: {anchor.path}:{anchor.start_line}: duplicate cluster "
+            f"{report.cluster_hash}"
+        )
+        lines.extend(_cluster_detail_lines(report, repository_root, None))
+    return "\n".join(lines)
+
+
+def _cluster_detail_lines(
+    report: ClusterReport,
+    repository_root: Path,
+    changed_locations: set[Location] | None,
+) -> list[str]:
+    lines: list[str] = []
+    for location in report.locations:
+        marker = ""
+        if changed_locations is not None:
+            marker = "[changed] " if location in changed_locations else "[existing] "
+        lines.append(
+            f"  - {marker}{location.path}:{location.start_line}-{location.end_line}"
+        )
+    relative_report = report.path.resolve().relative_to(repository_root.resolve())
+    lines.append(f"  Report: {relative_report}")
+    return lines
 
 
 def _validate_report_directory(report_dir: Path) -> None:

@@ -1,6 +1,6 @@
 # quality-gates
 
-Agent quality gates for any Git repository: aislop, anti-slop (oxlint with `@nkzw/oxlint-config`, `@interfere/landmines`, and local rules), ai-cleanup, fallow, and SlopO duplicate detection. Each gate checks only the current changes.
+Agent quality gates for any Git repository: aislop, anti-slop (oxlint with `@nkzw/oxlint-config`, `@interfere/landmines`, and local rules), ai-cleanup, fallow, and SlopO duplicate detection. Each gate checks only the current changes, and fails only on findings the changes introduce, so it also works in repositories you do not own.
 
 ## Install
 
@@ -19,11 +19,15 @@ Run from anywhere inside a repository:
 
 ```sh
 quality-gates run                  # all gates on current changes
+quality-gates run --base <ref>     # all gates on changes since <ref>
+quality-gates run --all            # all gates on the entire repository
 quality-gates cleanup              # fix AI typography in all files
-quality-gates cleanup --changes    # fix AI typography in changed files only
+quality-gates cleanup --changes    # fix AI typography in changed lines only
 ```
 
-Reports go to `.task/aislop/` and the SlopO index goes to `.slopo/repository/`. Add both to the repository's `.gitignore`.
+On a branch, current changes are all files that differ from the merge-base with the default branch (`origin/HEAD`, `origin/main`, `origin/master`, then local `main` or `master`), committed or not. On `main` and `master`, they are the uncommitted changes. `--base <ref>` compares with `<ref>` instead. anti-slop and ai-cleanup report only findings on changed lines (anti-slop also on the line below a change); old findings elsewhere in a changed file do not fail the gate.
+
+Reports go to `.task/aislop/` and the SlopO index goes to `.slopo/repository/`. `quality-gates run` adds both to `.git/info/exclude` unless the repository already ignores them.
 
 ## Per-repository config
 

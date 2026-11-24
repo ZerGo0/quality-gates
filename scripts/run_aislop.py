@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import shlex
@@ -175,26 +176,35 @@ def finish_run_directory(run_directory: Path) -> None:
         prune_run_directories(artifact_root)
 
 
-def build_stages(root: Path, run_directory: Path) -> tuple[Stage, ...]:
+def build_stages(
+    root: Path, run_directory: Path, base: str | None
+) -> tuple[Stage, ...]:
     scripts = QUALITY_GATES / "scripts"
     fallow_report = run_directory / "fallow.json"
+    full_repository = base is None
+    aislop_scope = () if full_repository else ("--changes", "--base", base)
+    file_scope = ("--all",) if full_repository else ()
+    cleanup_scope = () if full_repository else ("--changes",)
+    fallow_scope = (
+        ("--fail-on-issues",) if full_repository else ("audit", "--base", base)
+    )
     return (
         Stage(
             name="aislop",
-            command=(str(NODE_BIN / "aislop"), "scan", "--changes", ".", "--json"),
+            command=(str(NODE_BIN / "aislop"), "scan", *aislop_scope, ".", "--json"),
             cwd=root,
             environment={"DO_NOT_TRACK": "1"},
             parallel=True,
         ),
         Stage(
             name="anti-slop",
-            command=("node", str(scripts / "run-anti-slop.ts")),
+            command=("node", str(scripts / "run-anti-slop.ts"), *file_scope),
             cwd=root,
             parallel=True,
         ),
         Stage(
             name="ai-cleanup",
-            command=("node", str(scripts / "ai-cleanup.ts"), "--check", "--changes"),
+            command=("node", str(scripts / "ai-cleanup.ts"), "--check", *cleanup_scope),
             cwd=root,
             parallel=True,
         ),
@@ -202,7 +212,7 @@ def build_stages(root: Path, run_directory: Path) -> tuple[Stage, ...]:
             name="fallow",
             command=(
                 str(NODE_BIN / "fallow"),
-                "audit",
+                *fallow_scope,
                 "--root",
                 ".",
                 "--format",
@@ -217,7 +227,7 @@ def build_stages(root: Path, run_directory: Path) -> tuple[Stage, ...]:
         ),
         Stage(
             name="slopo",
-            command=("python3", str(QUALITY_GATES / "slopo" / "run.py")),
+            command=("python3", str(QUALITY_GATES / "slopo" / "run.py"), *file_scope),
             cwd=root,
             parallel=True,
         ),
@@ -397,10 +407,20 @@ def run_pipeline(stages: Sequence[Stage], run_directory: Path, root: Path) -> in
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Run the agent quality gates.")
+    parser.add_argument("--all", action="store_true", dest="full_repository")
+    arguments = parser.parse_args()
     root = repository_root()
     run_directory = create_run_directory(root)
     try:
-        exit_code = run_pipeline(build_stages(root, run_directory), run_directory, root)
+        base = (
+            None
+            if arguments.full_repository
+            else os.environ.get("QUALITY_GATES_BASE", "HEAD")
+        )
+        exit_code = run_pipeline(
+            build_stages(root, run_directory, base), run_directory, root
+        )
     except KeyboardInterrupt:
         partial_logs = relative_path(run_directory, root)
         print(f"\nAISLOP interrupted. Partial logs: {partial_logs}/")

@@ -5,15 +5,20 @@ set -euo pipefail
 readonly TOOL_DIR="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.." && pwd)"
 readonly SLOPO_DIR="$TOOL_DIR/slopo"
 readonly INSTALL_STAMP="$TOOL_DIR/.install-stamp"
+readonly ARTIFACT_DIRECTORIES=(.task/aislop/ .slopo/)
 
 usage() {
   cat <<'EOF'
 Usage: quality-gates <command>
 
 Commands:
-  run                            Run the quality gates on the current changes
-  cleanup [--check] [--changes]  Replace AI typography in repository files
-  setup                          Install llama.cpp and the SlopO embedding model
+  run [--base <ref> | --all]                     Run the quality gates on the current changes
+  cleanup [--check] [--changes [--base <ref>]]   Replace AI typography in repository files
+  setup                                          Install llama.cpp and the SlopO embedding model
+
+Changes are the files that differ from the merge-base with the default branch,
+or the uncommitted changes on main and master. --base <ref> compares with <ref> instead.
+run --all checks the entire repository.
 EOF
 }
 
@@ -44,19 +49,78 @@ enter_repository() {
   cd "$root"
 }
 
+exclude_artifacts() {
+  local exclude_file directory
+  exclude_file="$(git rev-parse --git-path info/exclude)"
+  for directory in "${ARTIFACT_DIRECTORIES[@]}"; do
+    git check-ignore -q --no-index -- "$directory" && continue
+    mkdir -p "$(dirname "$exclude_file")"
+    if [[ -s "$exclude_file" && -n "$(tail -c 1 "$exclude_file")" ]]; then
+      printf '\n' >>"$exclude_file"
+    fi
+    printf '/%s\n' "$directory" >>"$exclude_file"
+  done
+}
+
+export_change_base() {
+  local resolved
+  if [[ -n "$base" ]]; then
+    export SLOPO_AUDIT_BASE="$base"
+  fi
+  printf 'quality-gates: base: ' >&2
+  resolved="$(python3 "$SLOPO_DIR/resolve_git_base.py" --repository-root "$PWD")" || exit 2
+  export QUALITY_GATES_BASE="${resolved#*$'\t'}"
+}
+
 command="${1:-}"
 [[ $# -gt 0 ]] && shift
 
+base=""
+full_repository=false
+arguments=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --base)
+      [[ $# -ge 2 ]] || die '--base needs a Git ref'
+      base="$2"
+      shift 2
+      ;;
+    --base=*)
+      base="${1#--base=}"
+      shift
+      ;;
+    --all)
+      full_repository=true
+      shift
+      ;;
+    *)
+      arguments+=("$1")
+      shift
+      ;;
+  esac
+done
+
 case "$command" in
   run)
+    [[ ${#arguments[@]} -eq 0 ]] || die "unknown option for run: ${arguments[0]}"
+    [[ "$full_repository" == false || -z "$base" ]] || die '--all and --base cannot be combined'
     enter_repository
     ensure_dependencies
+    exclude_artifacts
+    if [[ "$full_repository" == true ]]; then
+      exec python3 "$TOOL_DIR/scripts/run_aislop.py" --all
+    fi
+    export_change_base
     exec python3 "$TOOL_DIR/scripts/run_aislop.py"
     ;;
   cleanup)
+    [[ "$full_repository" == false ]] || die '--all is only for run; cleanup without --changes covers all files'
     enter_repository
     ensure_dependencies
-    exec node "$TOOL_DIR/scripts/ai-cleanup.ts" "$@"
+    if [[ " ${arguments[*]-} " == *" --changes "* ]]; then
+      export_change_base
+    fi
+    exec node "$TOOL_DIR/scripts/ai-cleanup.ts" ${arguments[@]+"${arguments[@]}"}
     ;;
   setup)
     ensure_dependencies

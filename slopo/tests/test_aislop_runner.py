@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 QUALITY_GATES = Path(__file__).resolve().parents[2]
@@ -65,6 +66,41 @@ class AislopRunnerTests(unittest.TestCase):
         )
         self.assertIn("src/changed.ts:4", presentation.findings[0])
         self.assertIn("src/existing.ts:8", presentation.findings[1])
+
+    def test_changed_aislop_passes_with_only_existing_context_errors(self) -> None:
+        stage = run_aislop.Stage("aislop", ("aislop", "scan", "--changes"), self.root)
+        existing_error = {
+            "filePath": "src/old.ts",
+            "line": 3,
+            "severity": "error",
+            "changeContext": "existing-file-context",
+        }
+        changed_warning = {
+            "filePath": "src/new.ts",
+            "line": 9,
+            "severity": "warning",
+            "changeContext": "changed-line",
+        }
+        changed_error = {**changed_warning, "severity": "error"}
+
+        def result_for(diagnostics: list[dict[str, object]]) -> run_aislop.StageResult:
+            return run_aislop.StageResult(
+                stage=stage,
+                exit_code=1,
+                stdout=json.dumps({"diagnostics": diagnostics}),
+                stderr="",
+                elapsed_seconds=0.1,
+                log_path=self.run_directory / "aislop.log",
+                report_path=None,
+            )
+
+        self.assertTrue(result_for([existing_error, changed_warning]).passed)
+        self.assertFalse(result_for([existing_error, changed_error]).passed)
+        full_scan = replace(
+            result_for([existing_error]),
+            stage=run_aislop.Stage("aislop", ("aislop", "scan"), self.root),
+        )
+        self.assertFalse(full_scan.passed)
 
     def test_pipeline_continues_after_failure_and_writes_full_logs(self) -> None:
         stages = (
@@ -154,6 +190,86 @@ class AislopRunnerTests(unittest.TestCase):
         self.assertLess(raw_output.index("===== second ====="), raw_output.index("===== last ====="))
         self.assertIn("last ran", raw_output)
         self.assertEqual(list(self.run_directory.glob(".raw-*.log")), [])
+
+    def test_stages_compare_aislop_and_fallow_with_the_change_base(self) -> None:
+        stages = {
+            stage.name: stage
+            for stage in run_aislop.build_stages(self.root, self.run_directory, "abc123")
+        }
+
+        for name in ("aislop", "fallow"):
+            command = stages[name].command
+            self.assertEqual(command[command.index("--base") + 1], "abc123")
+
+    def test_full_repository_stages_drop_change_scoping(self) -> None:
+        stages = {
+            stage.name: stage
+            for stage in run_aislop.build_stages(self.root, self.run_directory, None)
+        }
+
+        self.assertNotIn("--changes", stages["aislop"].command)
+        self.assertIn("--all", stages["anti-slop"].command)
+        self.assertNotIn("--changes", stages["ai-cleanup"].command)
+        self.assertNotIn("audit", stages["fallow"].command)
+        self.assertIn("--all", stages["slopo"].command)
+
+    def test_fallow_repository_report_lists_every_finding(self) -> None:
+        report = self.run_directory / "fallow.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "kind": "combined",
+                    "check": {
+                        "total_issues": 1,
+                        "unused_exports": [
+                            {
+                                "path": "src/a.ts",
+                                "line": 3,
+                                "finding_id": "dc1:unused-export:1",
+                                "actions": [{"description": "Remove the export"}],
+                            }
+                        ],
+                    },
+                    "dupes": {
+                        "clone_groups": [
+                            {
+                                "fingerprint": "dup:1",
+                                "line_count": 9,
+                                "instances": [
+                                    {"file": "src/b.ts", "start_line": 4},
+                                    {"file": "src/c.ts", "start_line": 8},
+                                ],
+                            }
+                        ]
+                    },
+                    "health": {"findings": []},
+                }
+            ),
+            encoding="utf-8",
+        )
+        stage = run_aislop.Stage("fallow", ("unused",), self.root, report_filename="fallow.json")
+        result = run_aislop.StageResult(
+            stage=stage,
+            exit_code=1,
+            stdout="",
+            stderr="",
+            elapsed_seconds=0.0,
+            log_path=self.run_directory / "fallow.log",
+            report_path=report,
+        )
+
+        presentation = aislop_output.present_fallow(result, self.root)
+
+        self.assertEqual(
+            presentation.summary, "1 dead-code issues, 1 clone groups, 0 health findings"
+        )
+        self.assertEqual(
+            presentation.findings,
+            (
+                "src/a.ts:3 finding: Remove the export",
+                "src/b.ts:4 duplication [dup:1]: 2 instances, 9 lines",
+            ),
+        )
 
     def test_relevant_text_lines_deduplicates_progress_noise(self) -> None:
         lines = aislop_output.relevant_text_lines(
